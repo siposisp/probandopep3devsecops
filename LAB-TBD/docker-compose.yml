@@ -2,8 +2,8 @@ version: "3.8"
 
 services:
   app:
-    container_name: pep2devsecops_backend
-    image: derflinger/pep2devsecops_backend
+    container_name: pep2devsecops_backend2
+    image: niko085/pep2devsecops_backend2
     ports:
       - "8097:8097"
     environment:
