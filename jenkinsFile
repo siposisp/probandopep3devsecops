@@ -1,23 +1,21 @@
 pipeline {
     agent any
-    
     tools {
         maven "maven"
     }
-    
     stages {
         stage("Checkout") {
             steps {
                 checkout scmGit(
                     branches: [[name: '*/main']],
-                    userRemoteConfigs: [[url: 'https://github.com/siposisp/pep1devsecops']]
+                    userRemoteConfigs: [[url: 'https://github.com/siposisp/a']]
                 )
             }
         }
 
         stage("Build Backend") {
             steps {
-                dir("Pep3/LAB-TBD") {
+                dir("LAB-TBD") {
                     bat "mvn clean install"
                 }
             }
@@ -25,48 +23,45 @@ pipeline {
 
         stage("Test Backend") {
             steps {
-                dir("Pep3/LAB-TBD") {
+                dir("LAB-TBD") {
                     bat "mvn test"
                 }
             }
         }
-
-        stage("SonarQube Analysis") {
+        stage("SpotBugs Analysis") {
             steps {
-                dir("Pep3/LAB-TBD") {
-                    withCredentials([string(credentialsId: 'sonar-token-pep3', variable: 'SONAR_TOKEN')]) {
-                        bat '''
-                        mvn clean verify sonar:sonar ^
-                            -Dsonar.projectKey=pep3 ^
-                            -Dsonar.projectName="pep3" ^
-                            -Dsonar.host.url=http://localhost:9000 ^
-                            -Dsonar.token=%SONAR_TOKEN%
-                        '''
-                    }
+                dir("LAB-TBD") {
+                    bat "mvn spotbugs:spotbugs"
+                    bat "dir target"
                 }
             }
         }
-
+        stage("SonarQube Analysis"){
+            steps{
+                dir("LAB-TBD"){
+                    bat "mvn clean verify sonar:sonar  -Dsonar.projectKey=pep3  -Dsonar.projectName=\"pep3\"  -Dsonar.host.url=http://localhost:9000  -Dsonar.token=sqa_98387ca1b4bd116e325d4f605a0fcd2dec439525"
+                }
+            }
+        } 
         stage("Build Docker Image Backend") {
             steps {
-                dir("Pep3/LAB-TBD") {
-                    bat "docker build -t derflinger/pep3devsecops_backend ."
+                dir("LAB-TBD") {
+                    bat "docker build -t niko085/pep2devsecops_backend2 ."
                 }
             }
         }
-
         stage("Push Docker Image Backend") {
             steps {
-                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
-                    bat "docker login -u derflinger -p ${dckpass}"
-                    bat "docker push derflinger/pep3devsecops_backend"
+                dir("LAB-TBD") {
+                    bat "docker login -u niko085 -p Nicolas2519"
+                    bat "docker push niko085/pep2devsecops_backend2"
                 }
             }
         }
 
         stage("Build Frontend") {
             steps {
-                dir("Pep3/Frontend") {
+                dir("Frontend") {
                     bat "npm install"
                     bat "npm run build"
                 }
@@ -75,42 +70,54 @@ pipeline {
 
         stage("Build Docker Image Frontend") {
             steps {
-                dir("Pep3/Frontend") {
-                    bat "docker build -t derflinger/pep3devsecops_frontend ."
+                dir("Frontend") {
+                    bat "docker build -t niko085/pep2devsecops_frontend2 ."
                 }
             }
         }
 
         stage("Push Docker Image Frontend") {
             steps {
-                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
-                    bat "docker login -u derflinger -p ${dckpass}"
-                    bat "docker push derflinger/pep3devsecops_frontend"
+                dir("Frontend") {
+                    bat "docker login -u niko085 -p Nicolas2519"
+                    bat "docker push niko085/pep2devsecops_frontend2"
                 }
             }
         }
-
+        
+        
         stage("Create Docker Network") {
             steps {
                 bat "docker network create pep3-network || echo Network already exists"
             }
         }
 
-        stage("Deploy Backend") {
+        stage("Deploy Backend with Docker Compose") {
             steps {
-                dir("Pep3/LAB-TBD") {
+                dir("LAB-TBD") {
                     bat "docker-compose down || exit 0"
                     bat "docker-compose up -d --build"
                 }
             }
         }
-
-        stage("Deploy Frontend") {
+        stage("Deploy Frontend with Docker Compose") {
             steps {
-                dir("Pep3/Frontend") {
+                dir("Frontend") {
                     bat "docker-compose down || exit 0"
                     bat "docker-compose up -d --build"
                 }
+            }
+        }
+        stage("Publicar HTML SpotBugs") {
+            steps {
+                publishHTML([
+                    reportName: 'SpotBugs HTML Report',
+                    reportDir: 'LAB-TBD/target/spotbugs-html',
+                    reportFiles: 'index.html',
+                    keepAll: true,
+                    alwaysLinkToLastBuild: true,
+                    allowMissing: true
+                ])
             }
         }
     }
@@ -118,6 +125,7 @@ pipeline {
     post {
         always {
             bat "docker logout"
+            recordIssues tools: [spotBugs(pattern: '**/spotbugsXml.xml')]
         }
     }
-} 
+}
