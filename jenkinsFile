@@ -1,0 +1,123 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven "maven"
+    }
+    
+    stages {
+        stage("Checkout") {
+            steps {
+                checkout scmGit(
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'https://github.com/siposisp/pep1devsecops']]
+                )
+            }
+        }
+
+        stage("Build Backend") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    bat "mvn clean install"
+                }
+            }
+        }
+
+        stage("Test Backend") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    bat "mvn test"
+                }
+            }
+        }
+
+        stage("SonarQube Analysis") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    withCredentials([string(credentialsId: 'sonar-token-pep3', variable: 'SONAR_TOKEN')]) {
+                        bat '''
+                        mvn clean verify sonar:sonar ^
+                            -Dsonar.projectKey=pep3 ^
+                            -Dsonar.projectName="pep3" ^
+                            -Dsonar.host.url=http://localhost:9000 ^
+                            -Dsonar.token=%SONAR_TOKEN%
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage("Build Docker Image Backend") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    bat "docker build -t derflinger/pep3devsecops_backend ."
+                }
+            }
+        }
+
+        stage("Push Docker Image Backend") {
+            steps {
+                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
+                    bat "docker login -u derflinger -p ${dckpass}"
+                    bat "docker push derflinger/pep3devsecops_backend"
+                }
+            }
+        }
+
+        stage("Build Frontend") {
+            steps {
+                dir("Pep3/Frontend") {
+                    bat "npm install"
+                    bat "npm run build"
+                }
+            }
+        }
+
+        stage("Build Docker Image Frontend") {
+            steps {
+                dir("Pep3/Frontend") {
+                    bat "docker build -t derflinger/pep3devsecops_frontend ."
+                }
+            }
+        }
+
+        stage("Push Docker Image Frontend") {
+            steps {
+                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
+                    bat "docker login -u derflinger -p ${dckpass}"
+                    bat "docker push derflinger/pep3devsecops_frontend"
+                }
+            }
+        }
+
+        stage("Create Docker Network") {
+            steps {
+                bat "docker network create pep3-network || echo Network already exists"
+            }
+        }
+
+        stage("Deploy Backend") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    bat "docker-compose down || exit 0"
+                    bat "docker-compose up -d --build"
+                }
+            }
+        }
+
+        stage("Deploy Frontend") {
+            steps {
+                dir("Pep3/Frontend") {
+                    bat "docker-compose down || exit 0"
+                    bat "docker-compose up -d --build"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            bat "docker logout"
+        }
+    }
+} 
