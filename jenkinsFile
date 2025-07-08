@@ -1,131 +1,286 @@
 pipeline {
     agent any
+    
     tools {
         maven "maven"
     }
+    
+    environment {
+        NVD_API_KEY = 'bc4587bd-a2ed-47fa-8db2-6622440565e2'
+        FRONTEND_URL = 'http://localhost:3000'
+        BACKEND_URL = 'http://localhost:8097'
+        BACKEND_HEALTH_URL = 'http://localhost:8097/actuator/health'
+    }
+    
     stages {
         stage("Checkout") {
             steps {
                 checkout scmGit(
                     branches: [[name: '*/main']],
-                    userRemoteConfigs: [[url: 'https://github.com/siposisp/a']]
+                    userRemoteConfigs: [[url: 'https://github.com/siposisp/pep1devsecops']]
                 )
             }
         }
 
         stage("Build Backend") {
             steps {
-                dir("LAB-TBD") {
+                dir("Pep3/LAB-TBD") {
                     bat "mvn clean install"
+                }
+            }
+        }
+
+        // Análisis de dependencias del backend usando el plugin de Maven (más eficiente)
+        stage('OWASP Dependency Check Backend') {
+            steps {
+                dir('Pep3/LAB-TBD') {
+                    bat '''
+                        mvn org.owasp:dependency-check-maven:check ^
+                            -Dformats=HTML,JSON,XML ^
+                            -DfailOnCVSS=7 ^
+                            -DskipProvidedScope=false ^
+                            -DskipRuntimeScope=false ^
+                            -DskipTestScope=false
+                    '''
                 }
             }
         }
 
         stage("Test Backend") {
             steps {
-                dir("LAB-TBD") {
+                dir("Pep3/LAB-TBD") {
                     bat "mvn test"
                 }
             }
         }
-        stage("SpotBugs Analysis") {
+
+        stage("SonarQube Analysis") {
             steps {
-                dir("LAB-TBD") {
-                    bat "mvn spotbugs:spotbugs"
-                    bat "dir target"
-                }
-            }
-        }
-        stage("SonarQube Analysis"){
-            steps{
-                dir("LAB-TBD"){
-                    bat "mvn clean verify sonar:sonar  -Dsonar.projectKey=pep3  -Dsonar.projectName=\"pep3\"  -Dsonar.host.url=http://localhost:9000  -Dsonar.token=sqa_98387ca1b4bd116e325d4f605a0fcd2dec439525"
-                }
-            }
-        } 
-        stage("Build Docker Image Backend") {
-            steps {
-                dir("LAB-TBD") {
-                    bat "docker build -t niko085/pep2devsecops_backend2 ."
-                }
-            }
-        }
-        stage("Push Docker Image Backend") {
-            steps {
-                dir("LAB-TBD") {
-                    bat "docker login -u niko085 -p Nicolas2519"
-                    bat "docker push niko085/pep2devsecops_backend2"
+                dir("Pep3/LAB-TBD") {
+                    withCredentials([string(credentialsId: 'sonar-token-pep3', variable: 'SONAR_TOKEN')]) {
+                        bat '''
+                        mvn clean verify sonar:sonar ^
+                            -Dsonar.projectKey=pep3 ^
+                            -Dsonar.projectName="pep3" ^
+                            -Dsonar.host.url=http://localhost:9000 ^
+                            -Dsonar.token=%SONAR_TOKEN%
+                        '''
+                    }
                 }
             }
         }
 
         stage("Build Frontend") {
             steps {
-                dir("Frontend") {
+                dir("Pep3/Frontend") {
                     bat "npm install"
                     bat "npm run build"
                 }
             }
         }
 
+        // Análisis de dependencias del frontend usando Docker (mejor para Node.js)
+        stage('OWASP Dependency Check Frontend') {
+            steps {
+                dir('Pep3/Frontend') {
+                    bat "npm install"
+                    
+                    // Ejecutar Dependency Check con Docker usando --nvdApiKey y sin volumen de caché
+                    bat '''
+                        docker run --rm ^
+                            -v %cd%:/src ^
+                            owasp/dependency-check:latest ^
+                            --nvdApiKey bc4587bd-a2ed-47fa-8db2-6622440565e2 ^
+                            --project pep3-frontend ^
+                            --scan /src ^
+                            --format HTML ^
+                            --format JSON ^
+                            --format XML ^
+                            --out /src ^
+                            --failOnCVSS 7
+                    '''
+                }
+            }
+        }
+
+        stage("Build Docker Image Backend") {
+            steps {
+                dir("Pep3/LAB-TBD") {
+                    bat "docker build -t derflinger/pep3devsecops_backend ."
+                }
+            }
+        }
+
+        stage("Push Docker Image Backend") {
+            steps {
+                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
+                    bat "docker login -u derflinger -p ${dckpass}"
+                    bat "docker push derflinger/pep3devsecops_backend"
+                }
+            }
+        }
+
         stage("Build Docker Image Frontend") {
             steps {
-                dir("Frontend") {
-                    bat "docker build -t niko085/pep2devsecops_frontend2 ."
+                dir("Pep3/Frontend") {
+                    bat "docker build -t derflinger/pep3devsecops_frontend ."
                 }
             }
         }
 
         stage("Push Docker Image Frontend") {
             steps {
-                dir("Frontend") {
-                    bat "docker login -u niko085 -p Nicolas2519"
-                    bat "docker push niko085/pep2devsecops_frontend2"
+                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
+                    bat "docker login -u derflinger -p ${dckpass}"
+                    bat "docker push derflinger/pep3devsecops_frontend"
                 }
-            }
-        }
-        
-        
-        stage("Create Docker Network") {
-            steps {
-                bat "docker network create pep3-network || echo Network already exists"
             }
         }
 
-        stage("Deploy Backend with Docker Compose") {
+        stage("Deploy Backend") {
             steps {
-                dir("LAB-TBD") {
-                    bat "docker-compose down || exit 0"
+                dir("Pep3/LAB-TBD") {
+                    bat "docker-compose down 2>nul || exit 0"
                     bat "docker-compose up -d --build"
                 }
             }
         }
-        stage("Deploy Frontend with Docker Compose") {
+
+        stage("Deploy Frontend") {
             steps {
-                dir("Frontend") {
-                    bat "docker-compose down || exit 0"
+                dir("Pep3/Frontend") {
+                    bat "docker-compose down 2>nul || exit 0"
                     bat "docker-compose up -d --build"
                 }
             }
         }
-        stage("Publicar HTML SpotBugs") {
+
+        stage("Wait for Application") {
             steps {
-                publishHTML([
-                    reportName: 'SpotBugs HTML Report',
-                    reportDir: 'LAB-TBD/target/spotbugs-html',
-                    reportFiles: 'index.html',
-                    keepAll: true,
-                    alwaysLinkToLastBuild: true,
-                    allowMissing: true
-                ])
+                script {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitUntil {
+                            try {
+                                sh 'curl -f http://localhost:3000/health >/dev/null 2>&1'
+                                sh 'curl -f http://localhost:8097/emergencies/all >/dev/null 2>&1'
+                                return true
+                            } catch (Exception e) {
+                                echo "Esperando a que la aplicación esté disponible..."
+                                sleep(10)
+                                return false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Escaneo dinámico con OWASP ZAP Baseline (equilibrio entre velocidad y cobertura)
+        stage('OWASP ZAP Security Scan') {
+            steps {
+                withCredentials([string(credentialsId: 'dckrhubpassword', variable: 'dckpass')]) {
+                    bat "docker login -u derflinger -p %dckpass%"
+                }
+                script {
+                    bat "mkdir zap-reports 2>nul || exit 0"
+                    
+                    // ZAP Baseline Scan - mejor opción: rápido pero efectivo
+                    bat '''
+                        docker run --rm ^
+                            -v %cd%/zap-reports:/zap/wrk ^
+                            ghcr.io/zaproxy/zaproxy:stable ^
+                            zap-baseline.py ^
+                            -t http://host.docker.internal:3000 ^
+                            -r zap-security-report.html ^
+                            -I
+                    '''
+                }
+            }
+        }
+
+        stage("Deploy Monitoring Stack") {
+            steps {
+                dir("Pep3/monitoring") {
+                    bat "docker-compose down 2>nul || exit 0"
+                    bat "docker-compose up -d --build"
+                }
+            }
+        }
+        
+        // Generar reporte consolidado de seguridad
+        stage('Generate Security Report') {
+            steps {
+                script {
+                    def reportContent = """
+# Reporte de Seguridad PEP3 DevSecOps
+
+Fecha: ${new Date().format("yyyy-MM-dd HH:mm:ss")}
+Build: ${env.BUILD_NUMBER}
+
+## Configuración de Puertos
+- **Frontend**: ${env.FRONTEND_URL} (puerto 3000)
+- **Backend**: ${env.BACKEND_URL} (puerto 8097)
+- **Backend Health**: ${env.BACKEND_HEALTH_URL}
+
+## Resumen de Escaneos
+
+### OWASP Dependency Check
+- **Backend**: dependency-check-report.html (plugin Maven)
+- **Frontend**: dependency-check-report-frontend.html (Docker)
+
+### OWASP ZAP
+- **Security Scan**: zap-security-report.html (Baseline Scan)
+- **Target**: ${env.FRONTEND_URL}
+
+## Instrucciones para revisar reportes
+
+1. Abre los archivos HTML en tu navegador
+2. Revisa las vulnerabilidades encontradas
+3. Prioriza las vulnerabilidades con CVSS alto (7+)
+4. Actualiza las dependencias vulnerables
+5. Considera agregar supresiones en owasp-suppressions.xml para falsos positivos
+
+## Próximos pasos
+
+1. Revisar y corregir vulnerabilidades críticas
+2. Actualizar dependencias vulnerables
+3. Implementar medidas de mitigación
+4. Re-ejecutar escaneos después de las correcciones
+"""
+                    
+                    writeFile file: 'security-report.md', text: reportContent
+                }
             }
         }
     }
 
     post {
         always {
+            // Archivar reportes de seguridad
+            archiveArtifacts artifacts: '**/dependency-check-report-*.html', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/dependency-check-report-*.json', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'zap-reports/*.html', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'security-report.md', allowEmptyArchive: true
+            
             bat "docker logout"
-            recordIssues tools: [spotBugs(pattern: '**/spotbugsXml.xml')]
+            
+            script {
+                echo "=== RESUMEN DE ESCANEOS DE SEGURIDAD ==="
+                echo "Build: ${env.BUILD_NUMBER}"
+                echo "Fecha: ${new Date().format("yyyy-MM-dd HH:mm:ss")}"
+                echo "Frontend: ${env.FRONTEND_URL}"
+                echo "Backend: ${env.BACKEND_URL}"
+                echo "Reportes disponibles en los artifacts del build"
+                echo "================================================"
+            }
+        }
+        
+        success {
+            echo "✅ Pipeline completado exitosamente"
+        }
+        
+        failure {
+            echo "❌ Pipeline falló - Revisar logs para más detalles"
         }
     }
-}
+} 

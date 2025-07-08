@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   front-pep3:
     image: niko085/pep2devsecops_frontend2
@@ -7,9 +5,3 @@ services:
     ports:
       - "3000:80"
     restart: always
-    networks:
-      - pep3-network
-
-networks:
-  pep3-network:
-    external: true
